@@ -25,63 +25,51 @@ typedef enum {
 } send_rc;
 
 #define PORT 8000 /* port number listened */
+#define BUFSIZE 8192
 
 sen_sym *tags;
 
 void
-root_handler(struct evhttp_request *req, void *arg)
+generic_handler(struct evhttp_request *req, void *arg)
 {
-  char *prefix;
-  int sorted = 0;
+  const char *prefix;
   struct evbuffer *buf;
   if (!(buf = evbuffer_new())) {
     err(1, "failed to create response buffer");
   }
 
   /* get parameter */
-  {
-    struct evkeyval *kv;
-    struct evkeyvalq q;
-    evhttp_parse_query(evhttp_request_uri(req), &q);
-    TAILQ_FOREACH(kv, &q, next) {
-      if (*kv->key == 'q') {
-        prefix = kv->value;
-      } else if (*kv->key == 's') {
-        sorted = 1;
-      }
-    }
-  }
+  prefix = evhttp_decode_uri(evhttp_request_uri(req)) + 1;
 
   /* return tags */
   {
-    char *tag;
+    char tag[BUFSIZE];
     sen_set *s;
+    sen_id *tid;
     sen_set_cursor *c;
     if (!(s = sen_sym_prefix_search(tags, prefix))) {
-      err(2, "failed to sen_sym_prefix_search");
+      /* no entry found */
+      evbuffer_add(buf, "0\n", 2);
+      evhttp_send_reply(req, HTTP_OK, "OK", buf);
+      return;
+      /* err(1, "failed to sen_sym_prefix_search"); */
     }
     if (!(c = sen_set_cursor_open(s))) {
-      err(2, "failed to sen_set_cursor_open");
+      err(1, "failed to sen_set_cursor_open");
     }
-    while (sen_set_cursor_next(c, (void **)&tag, NULL)) {
-      evbuffer_add(buf, tag, strlen(tag));
+    {
+      unsigned int nent;
+      sen_set_info(s, NULL, NULL, &nent);
+      evbuffer_add_printf(buf, "%u\n", nent);
+    }
+    while (sen_set_cursor_next(c, (void **)&tid, NULL)) {
+      int tag_len = sen_sym_key(tags, *tid, tag, BUFSIZE);
+      evbuffer_add(buf, tag, tag_len - 1);
       evbuffer_add(buf, "\n", 1);
     }
     sen_set_cursor_close(c);
     sen_set_close(s);
   }
-  evhttp_send_reply(req, HTTP_OK, "OK", buf);
-}
-
-void
-generic_handler(struct evhttp_request *req, void *arg)
-{
-  struct evbuffer *buf;
-
-  buf = evbuffer_new();
-  if (buf == NULL)
-          err(1, "failed to create response buffer");
-  evbuffer_add_printf(buf, "Requested: %sn", evhttp_request_uri(req));
   evhttp_send_reply(req, HTTP_OK, "OK", buf);
 }
 
@@ -102,7 +90,6 @@ main(int argc, char **argv)
   }
   event_init();
   if (httpd = evhttp_start("0.0.0.0", PORT)) {
-    evhttp_set_cb(httpd, "/", root_handler, NULL);
     evhttp_set_gencb(httpd, generic_handler, NULL);
 
     event_dispatch();
