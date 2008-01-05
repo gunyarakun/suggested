@@ -1,15 +1,15 @@
-#ifdef WIN32
-#include <winsock2.h>
-#include <windows.h>
-#endif
-
 #include <sys/types.h>
 #include <sys/time.h>
 #include <stdlib.h>
 #include <err.h>
 
 #include <sys/queue.h>
-
+#ifndef TAILQ_FOREACH
+#define TAILQ_FOREACH(var, head, field) \
+  for ((var) = ((head)->tqh_first); \
+    (var); \
+    (var) = ((var)->field.tqe_next))
+#endif /* LIST_FOREACH */
 #include <event.h>
 #include <evhttp.h>
 
@@ -41,9 +41,9 @@ root_handler(struct evhttp_request *req, void *arg)
   /* get parameter */
   {
     struct evkeyval *kv;
-    struct evkeyvalq *q;
-    evhttp_parse_query(evhttp_request_uri(req), q);
-    TAILQ_FOREACH(kv, q, next) {
+    struct evkeyvalq q;
+    evhttp_parse_query(evhttp_request_uri(req), &q);
+    TAILQ_FOREACH(kv, &q, next) {
       if (*kv->key == 'q') {
         prefix = kv->value;
       } else if (*kv->key == 's') {
