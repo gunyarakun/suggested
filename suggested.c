@@ -77,11 +77,12 @@ generic_handler(struct evhttp_request *req, void *arg)
   }
   evhttp_add_header(req->output_headers, "Content-Type",
                     "text/plain; charset=UTF-8");
-
   /* get parameter */
   s = evhttp_decode_uri(evhttp_request_uri(req)) + 1;
   prefix = sen_nstr_open(s, strlen(s), sen_enc_utf8, 0);
-
+  if (!prefix->norm_blen) {
+    goto exit;
+  }
   /* return tags */
   {
     sen_set *s;
@@ -89,10 +90,7 @@ generic_handler(struct evhttp_request *req, void *arg)
     sen_set_cursor *c;
     if (!(s = sen_sym_prefix_search(tags, prefix->norm))) {
       /* no entry found */
-      evbuffer_add(buf, "0\n", 2);
-      evhttp_send_reply(req, HTTP_OK, "OK", buf);
-      return;
-      /* err(1, "failed to sen_sym_prefix_search"); */
+      goto exit;
     }
     if (!(c = sen_set_cursor_open(s))) {
       err(1, "failed to sen_set_cursor_open");
@@ -110,6 +108,10 @@ generic_handler(struct evhttp_request *req, void *arg)
     sen_set_cursor_close(c);
     sen_set_close(s);
   }
+  evhttp_send_reply(req, HTTP_OK, "OK", buf);
+  return;
+exit:
+  evbuffer_add(buf, "0\n", 2);
   evhttp_send_reply(req, HTTP_OK, "OK", buf);
 }
 
