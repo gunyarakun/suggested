@@ -14,40 +14,80 @@
 #include <evhttp.h>
 
 #include <senna/senna.h>
+/* copy from senna/str.h */
+typedef struct {
+  const char *orig;
+  size_t orig_blen;
+  char *norm;
+  size_t norm_blen;
+  uint_least8_t *ctypes;
+  int16_t *checks;
+  size_t length;
+  int flags;
+  sen_ctx *ctx;
+  /* sen_encoding encoding; */
+} sen_nstr;
+sen_nstr *sen_nstr_open(const char *str, size_t str_len, sen_encoding encoding, int flags);
 
 #include <stdio.h>
 #include <string.h>
 
-typedef enum {
-  send_rc_success = 0,
-  send_memory_exhausted,
-  send_invalid_argument
-} send_rc;
-
 #define PORT 8000 /* port number listened */
-#define BUFSIZE 8192
 
 sen_sym *tags;
+char gbuf[SEN_SYM_MAX_KEY_SIZE];
+
+static char *
+chomp(char *string)
+{
+  int l = strlen(string);
+  if (l) {
+    char *p = string + l - 1;
+    if (*p == '\n') { *p = '\0'; }
+  }
+  return string;
+}
+
+static int
+do_insert(const char *filename)
+{
+  if (!(tags = sen_sym_create(filename, 0, 0, sen_enc_utf8))) {
+    fprintf(stderr, "sym create failed\n");
+    return -1;
+  }
+  while (!feof(stdin)) {
+    char *cstr;
+    sen_nstr *s;
+    if (!fgets(gbuf, SEN_SYM_MAX_KEY_SIZE, stdin)) { break; }
+    cstr = chomp(gbuf);
+    s = sen_nstr_open(cstr, strlen(cstr), sen_enc_utf8, 0);
+    sen_sym_get(tags, s->norm);
+  }
+  return 0;
+}
 
 void
 generic_handler(struct evhttp_request *req, void *arg)
 {
-  const char *prefix;
+  const char *s;
+  sen_nstr *prefix;
   struct evbuffer *buf;
   if (!(buf = evbuffer_new())) {
     err(1, "failed to create response buffer");
   }
+  evhttp_add_header(req->output_headers, "Content-Type",
+                    "text/plain; charset=UTF-8");
 
   /* get parameter */
-  prefix = evhttp_decode_uri(evhttp_request_uri(req)) + 1;
+  s = evhttp_decode_uri(evhttp_request_uri(req)) + 1;
+  prefix = sen_nstr_open(s, strlen(s), sen_enc_utf8, 0);
 
   /* return tags */
   {
-    char tag[BUFSIZE];
     sen_set *s;
     sen_id *tid;
     sen_set_cursor *c;
-    if (!(s = sen_sym_prefix_search(tags, prefix))) {
+    if (!(s = sen_sym_prefix_search(tags, prefix->norm))) {
       /* no entry found */
       evbuffer_add(buf, "0\n", 2);
       evhttp_send_reply(req, HTTP_OK, "OK", buf);
@@ -63,8 +103,8 @@ generic_handler(struct evhttp_request *req, void *arg)
       evbuffer_add_printf(buf, "%u\n", nent);
     }
     while (sen_set_cursor_next(c, (void **)&tid, NULL)) {
-      int tag_len = sen_sym_key(tags, *tid, tag, BUFSIZE);
-      evbuffer_add(buf, tag, tag_len - 1);
+      int tag_len = sen_sym_key(tags, *tid, gbuf, SEN_SYM_MAX_KEY_SIZE);
+      evbuffer_add(buf, gbuf, tag_len - 1);
       evbuffer_add(buf, "\n", 1);
     }
     sen_set_cursor_close(c);
@@ -85,8 +125,9 @@ main(int argc, char **argv)
 
   sen_init();
   if (!(tags = sen_sym_open(argv[1]))) {
-    SEN_LOG(sen_log_alert, "sym open error!");
-    return 2;
+    fprintf(stderr, "create dictionary...\n");
+    do_insert(argv[1]);
+    fprintf(stderr, "dictionary created !!\n");
   }
   event_init();
   if (httpd = evhttp_start("0.0.0.0", PORT)) {
@@ -96,7 +137,7 @@ main(int argc, char **argv)
 
     evhttp_free(httpd);
   } else {
-    puts("cannot bind");
+    fprintf(stderr, "cannot bind port %d", PORT);
   }
   sen_sym_close(tags);
 
