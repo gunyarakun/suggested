@@ -1,0 +1,7 @@
+* how to use
+wordlist must be encoded in UTF-8.
+
+first time
+./suggested dictionary < wordlist
+other
+./suggested dictionary
